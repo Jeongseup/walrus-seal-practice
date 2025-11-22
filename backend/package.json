@@ -15,7 +15,8 @@
     "delete-blob:tiles": "ts-node src/delete_blob.ts --tiles",
     "delete-blob:manifest": "ts-node src/delete_blob.ts --manifest",
     "setup": "ts-node src/setup_game.ts",
-    "compute-key-id": "ts-node src/compute_key_id.ts"
+    "compute-key-id": "ts-node src/compute_key_id.ts",
+    "decrypt-pdata": "ts-node src/decrypt_pdata.ts"
   },
   "keywords": [],
   "author": "",
