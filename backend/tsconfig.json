@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",           // ESM 모듈 시스템 사용
+    "moduleResolution": "NodeNext", // Node.js 최신 해석 방식
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "ts-node": {
+    "esm": true,                    // ts-node에서 ESM 모드 활성화
+    "experimentalSpecifierResolution": "node"
+  }
+}

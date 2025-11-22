@@ -1,0 +1,40 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "ts-node src/index.ts",
+    "read-blob": "ts-node src/read_blob.ts",
+    "read-blob:tiles": "ts-node src/read_blob.ts --tiles",
+    "read-blob:manifest": "ts-node src/read_blob.ts --manifest",
+    "decrypt-blob": "ts-node src/decrypt_blob.ts",
+    "decrypt-blob:tiles": "ts-node src/decrypt_blob.ts --from-file tmp/tiles_upload_results.json",
+    "delete-blob": "ts-node src/delete_blob.ts",
+    "delete-blob:tiles": "ts-node src/delete_blob.ts --tiles",
+    "delete-blob:manifest": "ts-node src/delete_blob.ts --manifest",
+    "setup": "ts-node src/setup_game.ts",
+    "compute-key-id": "ts-node src/compute_key_id.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@mysten/seal": "^0.9.4",
+    "@mysten/sui": "^1.45.0",
+    "@mysten/walrus": "^0.8.4",
+    "@types/sharp": "^0.31.1",
+    "axios": "^1.13.2",
+    "dotenv": "^17.2.3",
+    "ethers": "^6.15.0",
+    "sharp": "^0.34.5",
+    "undici": "^7.16.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

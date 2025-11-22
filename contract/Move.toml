@@ -1,0 +1,10 @@
+[package]
+name = "curg_mosaic_reveal"
+edition = "2024" # 최신 Move 2024 에디션 사용
+version = "0.0.1"
+
+[dependencies]
+
+[addresses]
+curg_mosaic_reveal = "0x0"
+
