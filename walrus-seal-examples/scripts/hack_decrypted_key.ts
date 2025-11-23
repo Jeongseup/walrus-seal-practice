@@ -262,39 +262,31 @@ async function downloadAndDecrypt(
         // 원본 코드처럼 EncryptedObject.parse의 id를 그대로 사용
         const ids = batch.map((enc) => EncryptedObject.parse(new Uint8Array(enc)).id);
 
-
-        /*
-            1. txBytes가 어떻게 인증 토큰(Authentication Token)이 되는가?
-            핵심 원리: "오프체인 시뮬레이션(Dry-run/Inspect)을 통한 권한 검증"
-            일반적인 Web2 방식(API Key, JWT)과 달리, Seal은 블록체인의 상태(State)와 스마트 컨트랙트(Move)의 로직을 접근 제어 목록(ACL)으로 사용합니다.
-            동작 과정은 다음과 같습니다:
-            클라이언트 행동: 사용자는 "나 이 파일 접근할래"라는 내용의 트랜잭션을 생성하고 자신의 지갑 개인키로 서명합니다. 이것이 txBytes입니다.
-            이 트랜잭션은 seal_approve(key_id) 같은 함수를 호출하는 내용을 담고 있습니다.
-            중요: 이 트랜잭션은 블록체인 네트워크에 전송(Publish)하지 않습니다. (가스비 X)
-            서버 행동 (Seal Node): Seal 서버는 클라이언트로부터 txBytes를 받습니다.
-            검증 (Simulation): 서버는 자신의 로컬 노드(또는 연결된 Full Node)에서 이 트랜잭션을 시뮬레이션(Dry-run) 해봅니다.
-            서명 확인: 트랜잭션 서명이 유효한지 확인합니다. (즉, 이 요청이 해당 주소의 소유자로부터 왔는지 증명됨)
-            로직 실행: seal_approve 함수를 가상으로 실행합니다. 만약 사용자가 해당 객체의 소유자가 아니거나 권한이 없다면, Move 코드는 abort(에러)를 발생시킵니다.
-            결과: 시뮬레이션이 에러 없이 성공적으로 완료되면, 서버는 "아, 이 사용자는 블록체인 상에서 정당한 권한을 가진 사람이구나"라고 판단하고 키 조각(Key Shard)을 내어줍니다.
-            이 방식 덕분에 개발자는 복잡한 인증 서버를 구축할 필요 없이, Move 컨트랙트로 권한 로직(소유권, 화이트리스트, 시간 제한 등)만 짜면 됩니다.
-        */
         const tx = new Transaction();
+        // moveCallConstructor는 string을 기대하므로 id를 string으로 변환
         ids.forEach((id) => {
             const idStr = typeof id === 'string' ? id : toHex(id);
             moveCallConstructor(tx, idStr);
         });
-
+        // function constructMoveCall(packageId: string, allowlistId: string): MoveCallConstructor {
+        //     return (tx: Transaction, id: string) => {
+        //         tx.moveCall({
+        //             target: `${packageId}::allowlist::seal_approve`,
+        //             arguments: [tx.pure.vector('u8', fromHex(id)), tx.object(allowlistId)],
+        //         });
+        //     };
+        // }
 
         const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
-        console.log(`🔑 Authentication Token txBytes: ${txBytes}`);
+        console.log(`🔑 txBytes: ${txBytes}`);
 
         try {
             // 원본 코드처럼 ids를 그대로 전달 (fetchKeys가 적절한 형식으로 처리)
             await sealClient.fetchKeys({ 
-                ids,          // [1] 대상: "누구의 키를 가져올 것인가?"
-                txBytes,      // [2] 권한 증명: "내가 이 키를 가져갈 자격이 있다는 증거"
-                sessionKey,   // [3] 보안 채널: "가져오는 도중에 남들이 못 보게 이걸로 잠가줘"
-                threshold: 2  // [4] 성공 기준: "최소 몇 개의 조각이 모여야 성공으로 칠 것인가?"
+                ids, 
+                txBytes, 
+                sessionKey, 
+                threshold: 2 
             });
             console.log(`✅ Fetched keys for batch ${Math.floor(i / 10) + 1}`);
         } catch (err) {
@@ -355,109 +347,8 @@ async function main() {
     console.log(`🌐 Network: ${NETWORK}`);
 
     // 1. 명령줄 인자 확인
-    let blobId: string | undefined;
-    let allowlistId: string | undefined;
-    
-    if (process.argv.length >= 4) {
-        // 명령줄 인자로 제공된 경우
-        blobId = process.argv[2];
-        allowlistId = process.argv[3];
-    } else {
-        // 대화형 입력
-        console.log('\n📦 Encrypted Key 다운로드 및 복호화');
-        console.log('='.repeat(50));
-
-        // 1-1. 모든 Cap 객체 가져오기
-        const allCaps = await getAllCaps();
-        
-        if (allCaps.length === 0) {
-            console.log(`\n⚠️  No Cap objects found for address: ${keypair.toSuiAddress()}`);
-            console.log(`💡 You need to create an allowlist first.`);
-            console.log(`   Run: npm run create-allowlist`);
-            process.exit(1);
-        }
-
-        // 1-2. Allowlist 선택
-        if (allCaps.length === 1) {
-            allowlistId = allCaps[0].allowlist_id;
-            console.log(`\n✅ Using the only available allowlist:`);
-            console.log(`   Allowlist ID: ${allowlistId}`);
-        } else {
-            // 여러 Cap이 있으면 선택
-            console.log(`\n📋 Found ${allCaps.length} allowlist(s). Please select one:`);
-            console.log('='.repeat(50));
-            
-            // 각 Cap에 대한 allowlist 정보 가져오기
-            const capInfos = await Promise.all(
-                allCaps.map(async (cap) => {
-                    try {
-                        const allowlist = await getAllowlist(cap.allowlist_id);
-                        return {
-                            cap,
-                            allowlistName: allowlist.name,
-                            memberCount: allowlist.list.length,
-                        };
-                    } catch (error) {
-                        return {
-                            cap,
-                            allowlistName: 'N/A',
-                            memberCount: 0,
-                        };
-                    }
-                })
-            );
-
-            capInfos.forEach((info, index) => {
-                console.log(`\n${index + 1}. Allowlist: ${info.allowlistName}`);
-                console.log(`   Allowlist ID: ${info.cap.allowlist_id}`);
-                console.log(`   Cap ID: ${info.cap.id}`);
-                console.log(`   Members: ${info.memberCount} address(es)`);
-            });
-
-            const input = await getUserInput(`\n🔢 Select Allowlist (1-${allCaps.length}): `);
-            const selectedIndex = parseInt(input.trim()) - 1;
-
-            if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= allCaps.length) {
-                console.error(`❌ Invalid selection. Please choose a number between 1 and ${allCaps.length}.`);
-                process.exit(1);
-            }
-
-            allowlistId = allCaps[selectedIndex].allowlist_id;
-            
-            console.log(`\n✅ Selected:`);
-            console.log(`   Allowlist ID: ${allowlistId}`);
-        }
-
-        // 1-3. 선택한 allowlist의 blob ID들 가져오기
-        // NOTE: publish 콜을 통해서 allowlist 오브젝트의 child object로 blob_id 가 포함된 dynamic object가 등록되어이 있음.
-        console.log(`\n🔍 Loading blob IDs from allowlist...`);
-        const blobIds = await getBlobIdsFromAllowlist(allowlistId);
-
-        if (blobIds.length === 0) {
-            console.log(`\n⚠️  No blob IDs found in this allowlist.`);
-            console.log(`💡 You may need to upload a secret key first.`);
-            console.log(`   Run: npm run upload-secret-key`);
-            process.exit(1);
-        }
-
-        // 1-4. Blob ID 선택
-        console.log(`\n📋 Found ${blobIds.length} blob ID(s) in this allowlist:`);
-        console.log('='.repeat(50));
-        blobIds.forEach((id, index) => {
-            console.log(`${index + 1}. ${id}`);
-        });
-
-        const blobInput = await getUserInput(`\n🔢 Select Blob ID (1-${blobIds.length}): `);
-        const selectedBlobIndex = parseInt(blobInput.trim()) - 1;
-
-        if (isNaN(selectedBlobIndex) || selectedBlobIndex < 0 || selectedBlobIndex >= blobIds.length) {
-            console.error(`❌ Invalid selection. Please choose a number between 1 and ${blobIds.length}.`);
-            process.exit(1);
-        }
-
-        blobId = blobIds[selectedBlobIndex];
-        console.log(`\n✅ Selected Blob ID: ${blobId}`);
-    }
+    let blobId: string = 'VP8IH95U0mM8pQa_dck9uQMvoSdTa0a1GvnbeCsYiKM';
+    let allowlistId: string = '0x9a4e969eb88da1c1463142044899b31309af4ce2fc1fabc0ae4fdccf046f43e6';
 
     if (!blobId || !allowlistId) {
         console.error('❌ 필수 인자가 누락되었습니다.');
@@ -472,12 +363,6 @@ async function main() {
 
     try {
         // 2. SessionKey 생성 및 서명
-        // 클라이언트는 브라우저/로컬에서 **임시 ElGamal 키 쌍(Public/Private)**을 새로 생성합니다. 이것이 sessionKey입니다.
-        // 그리고 유저의 지갑(signer)으로 "이 임시 공개키는 내가 만든 거야"라는 메시지에 서명합니다.
-        // 서버에 [임시 공개키 + 유저의 서명 + txBytes]를 보냅니다.
-        // 서버는 유저의 서명을 확인한 뒤, 키 조각을 임시 공개키로 암호화해서 응답합니다.
-        // 클라이언트는 메모리에 들고 있던 임시 개인키로 응답을 복호화합니다.
-        // 즉, SessionKey는 일회용(또는 세션용) 보안 터널을 뚫기 위한 전용 키이며, 유저의 지갑 키는 이 터널의 주인을 보증하는 신분증 역할을 합니다.
         console.log(`\n🔑 Creating SessionKey...`);
         const sessionKey = await SessionKey.create({
             address: keypair.toSuiAddress(),

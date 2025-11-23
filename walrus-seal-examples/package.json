@@ -9,7 +9,8 @@
     "add-allowlist-address": "ts-node scripts/add_allowlist_address.ts",
     "upload-secret-key": "ts-node scripts/upload_secret_key.ts",
     "down-encrypted-key": "ts-node scripts/down_encrypted_key.ts",
-    "down-and-decrypted-key": "ts-node scripts/down_and_decrypted_key.ts"
+    "down-and-decrypted-key": "ts-node scripts/down_and_decrypted_key.ts",
+    "hack-decrypted-key": "ts-node scripts/hack_decrypted_key.ts"
   },
   "keywords": [],
   "author": "",

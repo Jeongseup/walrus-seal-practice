@@ -72,6 +72,7 @@ async function createAllowlist(name: string): Promise<string> {
     
     tx.setGasBudget(10000000);
 
+
     // 트랜잭션 빌드 및 서명
     console.log(`🔨 Building transaction...`);
     const result = await suiClient.signAndExecuteTransaction({
