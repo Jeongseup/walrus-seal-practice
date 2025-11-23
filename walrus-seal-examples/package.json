@@ -4,18 +4,12 @@
   "description": "Seal examples for pdata pattern with frontend",
   "main": "index.js",
   "scripts": {
-    "upload-walrus": "ts-node scripts/upload_walrus.ts",
-    "download-walrus": "ts-node scripts/download_walrus.ts",
     "check-allowlist": "ts-node scripts/check_allowlist.ts",
     "create-allowlist": "ts-node scripts/create_allowlist.ts",
     "add-allowlist-address": "ts-node scripts/add_allowlist_address.ts",
     "upload-secret-key": "ts-node scripts/upload_secret_key.ts",
     "down-encrypted-key": "ts-node scripts/down_encrypted_key.ts",
-    "down-and-decrypted-key": "ts-node scripts/down_and_decrypted_key.ts",
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "lint": "eslint .",
-    "preview": "vite preview"
+    "down-and-decrypted-key": "ts-node scripts/down_and_decrypted_key.ts"
   },
   "keywords": [],
   "author": "",
