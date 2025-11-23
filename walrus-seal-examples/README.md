@@ -58,5 +58,5 @@ npm run down-encrypted-key
 10. download decrypted-key
 
 ```
-npm run
+npm run down-and-decrypted-key
 ```
