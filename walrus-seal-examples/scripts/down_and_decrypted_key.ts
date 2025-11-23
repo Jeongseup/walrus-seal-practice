@@ -156,6 +156,37 @@ async function getAllowlist(allowlistId: string) {
 }
 
 /**
+ * Allowlist의 dynamic field에서 blob ID들을 가져옴
+ */
+async function getBlobIdsFromAllowlist(allowlistId: string): Promise<string[]> {
+    try {
+        const dynamicFields = await suiClient.getDynamicFields({
+            parentId: allowlistId,
+        });
+
+        // dynamic field의 name이 blob_id (String 타입)
+        const blobIds = dynamicFields.data
+            .map((field) => {
+                // field.name의 타입이 string인지 확인
+                if (typeof field.name === 'string') {
+                    return field.name;
+                }
+                // field.name이 객체인 경우 (예: { type: 'String', value: '...' })
+                if (field.name && typeof field.name === 'object' && 'value' in field.name) {
+                    return field.name.value as string;
+                }
+                return null;
+            })
+            .filter((id): id is string => id !== null);
+
+        return blobIds;
+    } catch (error) {
+        console.error(`⚠️ Failed to get dynamic fields for allowlist ${allowlistId}:`, error);
+        return [];
+    }
+}
+
+/**
  * Walrus에서 blob 다운로드
  * 여러 aggregator를 시도하여 다운로드
  */
@@ -317,15 +348,8 @@ async function main() {
         // 대화형 입력
         console.log('\n📦 Encrypted Key 다운로드 및 복호화');
         console.log('='.repeat(50));
-        
-        const blobInput = await getUserInput('\n🔍 다운로드할 Blob ID를 입력하세요: ');
-        if (!blobInput) {
-            console.error('❌ Blob ID가 입력되지 않았습니다.');
-            process.exit(1);
-        }
-        blobId = blobInput.trim();
 
-        // Allowlist 선택
+        // 1-1. 모든 Cap 객체 가져오기
         const allCaps = await getAllCaps();
         
         if (allCaps.length === 0) {
@@ -335,7 +359,7 @@ async function main() {
             process.exit(1);
         }
 
-        // Cap이 하나면 자동 선택
+        // 1-2. Allowlist 선택
         if (allCaps.length === 1) {
             allowlistId = allCaps[0].allowlist_id;
             console.log(`\n✅ Using the only available allowlist:`);
@@ -385,6 +409,35 @@ async function main() {
             console.log(`\n✅ Selected:`);
             console.log(`   Allowlist ID: ${allowlistId}`);
         }
+
+        // 1-3. 선택한 allowlist의 blob ID들 가져오기
+        console.log(`\n🔍 Loading blob IDs from allowlist...`);
+        const blobIds = await getBlobIdsFromAllowlist(allowlistId);
+
+        if (blobIds.length === 0) {
+            console.log(`\n⚠️  No blob IDs found in this allowlist.`);
+            console.log(`💡 You may need to upload a secret key first.`);
+            console.log(`   Run: npm run upload-secret-key`);
+            process.exit(1);
+        }
+
+        // 1-4. Blob ID 선택
+        console.log(`\n📋 Found ${blobIds.length} blob ID(s) in this allowlist:`);
+        console.log('='.repeat(50));
+        blobIds.forEach((id, index) => {
+            console.log(`${index + 1}. ${id}`);
+        });
+
+        const blobInput = await getUserInput(`\n🔢 Select Blob ID (1-${blobIds.length}): `);
+        const selectedBlobIndex = parseInt(blobInput.trim()) - 1;
+
+        if (isNaN(selectedBlobIndex) || selectedBlobIndex < 0 || selectedBlobIndex >= blobIds.length) {
+            console.error(`❌ Invalid selection. Please choose a number between 1 and ${blobIds.length}.`);
+            process.exit(1);
+        }
+
+        blobId = blobIds[selectedBlobIndex];
+        console.log(`\n✅ Selected Blob ID: ${blobId}`);
     }
 
     if (!blobId || !allowlistId) {

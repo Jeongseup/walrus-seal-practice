@@ -21,12 +21,17 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 if (!process.env.PRIVATE_KEY) {
     throw new Error("❌ PRIVATE_KEY environment variable missing");
 }
+if (!process.env.PACKAGE_ID) {
+    throw new Error("❌ PACKAGE_ID environment variable missing");
+}
 
 const NETWORK = 'testnet';
 const PRIVATE_KEY = process.env.PRIVATE_KEY;
+const PACKAGE_ID = process.env.PACKAGE_ID;
 
 const { secretKey } = decodeSuiPrivateKey(PRIVATE_KEY!);
 const keypair = Ed25519Keypair.fromSecretKey(secretKey);
+const suiClient = new SuiClient({ url: getFullnodeUrl(NETWORK) });
 
 // Walrus Aggregator URLs
 const WALRUS_AGGREGATOR_URLS = [
@@ -48,6 +53,100 @@ function getUserInput(question: string): Promise<string> {
             resolve(answer.trim());
         });
     });
+}
+
+/**
+ * 현재 계정이 소유한 모든 Cap 객체들을 가져옴
+ */
+async function getAllCaps(): Promise<Array<{ id: string; allowlist_id: string }>> {
+    console.log(`\n🔍 Loading all Cap objects for address: ${keypair.toSuiAddress()}`);
+    
+    const res = await suiClient.getOwnedObjects({
+        owner: keypair.toSuiAddress(),
+        options: {
+            showContent: true,
+            showType: true,
+        },
+        filter: {
+            StructType: `${PACKAGE_ID}::allowlist::Cap`,
+        },
+    });
+
+    const caps = res.data
+        .map((obj) => {
+            if (!obj.data?.content || typeof obj.data.content !== 'object' || !('fields' in obj.data.content)) {
+                return null;
+            }
+            const fields = (obj.data.content as { fields: any }).fields;
+            return {
+                id: fields?.id?.id || fields?.id,
+                allowlist_id: fields?.allowlist_id || fields?.allowlist_id?.id,
+            };
+        })
+        .filter((item): item is { id: string; allowlist_id: string } => 
+            item !== null && item.id && item.allowlist_id
+        );
+
+    console.log(`✅ Found ${caps.length} Cap object(s)`);
+    return caps;
+}
+
+/**
+ * Allowlist 객체를 가져옴
+ */
+async function getAllowlist(allowlistId: string) {
+    try {
+        const allowlist = await suiClient.getObject({
+            id: allowlistId,
+            options: { showContent: true },
+        });
+
+        if (!allowlist.data?.content || typeof allowlist.data.content !== 'object' || !('fields' in allowlist.data.content)) {
+            throw new Error('Invalid allowlist object');
+        }
+
+        const fields = (allowlist.data.content as { fields: any }).fields || {};
+        
+        return {
+            id: allowlistId,
+            name: fields.name || 'N/A',
+            list: fields.list || [],
+        };
+    } catch (error) {
+        console.error(`❌ Failed to load allowlist: ${error}`);
+        throw error;
+    }
+}
+
+/**
+ * Allowlist의 dynamic field에서 blob ID들을 가져옴
+ */
+async function getBlobIdsFromAllowlist(allowlistId: string): Promise<string[]> {
+    try {
+        const dynamicFields = await suiClient.getDynamicFields({
+            parentId: allowlistId,
+        });
+
+        // dynamic field의 name이 blob_id (String 타입)
+        const blobIds = dynamicFields.data
+            .map((field) => {
+                // field.name의 타입이 string인지 확인
+                if (typeof field.name === 'string') {
+                    return field.name;
+                }
+                // field.name이 객체인 경우 (예: { type: 'String', value: '...' })
+                if (field.name && typeof field.name === 'object' && 'value' in field.name) {
+                    return field.name.value as string;
+                }
+                return null;
+            })
+            .filter((id): id is string => id !== null);
+
+        return blobIds;
+    } catch (error) {
+        console.error(`⚠️ Failed to get dynamic fields for allowlist ${allowlistId}:`, error);
+        return [];
+    }
 }
 
 /**
@@ -90,6 +189,7 @@ async function downloadBlobFromWalrus(blobId: string): Promise<ArrayBuffer | nul
 async function main() {
     console.log(`\n📥 Download Encrypted Key from Walrus`);
     console.log(`📝 User Address: ${keypair.toSuiAddress()}`);
+    console.log(`📦 Package ID: ${PACKAGE_ID}`);
     console.log(`🌐 Network: ${NETWORK}`);
 
     // 1. 명령줄 인자에서 blob ID 확인
@@ -101,14 +201,93 @@ async function main() {
         // 사용자 입력 요청
         console.log('\n📦 Encrypted Key 다운로드');
         console.log('='.repeat(50));
-        const input = await getUserInput('\n🔍 다운로드할 Blob ID를 입력하세요: ');
+
+        // 1-1. 모든 Cap 객체 가져오기
+        const allCaps = await getAllCaps();
         
-        if (!input) {
-            console.error('❌ Blob ID가 입력되지 않았습니다.');
+        if (allCaps.length === 0) {
+            console.log(`\n⚠️  No Cap objects found for address: ${keypair.toSuiAddress()}`);
+            console.log(`💡 You need to create an allowlist first.`);
+            console.log(`   Run: npm run create-allowlist`);
             process.exit(1);
         }
-        
-        blobId = input.trim();
+
+        // 1-2. Allowlist 선택
+        let selectedAllowlistId: string;
+        if (allCaps.length === 1) {
+            selectedAllowlistId = allCaps[0].allowlist_id;
+            console.log(`\n✅ Using the only available allowlist:`);
+            console.log(`   Allowlist ID: ${selectedAllowlistId}`);
+        } else {
+            console.log(`\n📋 Found ${allCaps.length} allowlist(s). Please select one:`);
+            console.log('='.repeat(50));
+            
+            const capInfos = await Promise.all(
+                allCaps.map(async (cap) => {
+                    try {
+                        const allowlist = await getAllowlist(cap.allowlist_id);
+                        return {
+                            cap,
+                            allowlistName: allowlist.name,
+                            memberCount: allowlist.list.length,
+                        };
+                    } catch (error) {
+                        return {
+                            cap,
+                            allowlistName: 'N/A',
+                            memberCount: 0,
+                        };
+                    }
+                })
+            );
+
+            capInfos.forEach((info, index) => {
+                console.log(`\n${index + 1}. Allowlist: ${info.allowlistName}`);
+                console.log(`   Allowlist ID: ${info.cap.allowlist_id}`);
+                console.log(`   Cap ID: ${info.cap.id}`);
+                console.log(`   Members: ${info.memberCount} address(es)`);
+            });
+
+            const input = await getUserInput(`\n🔢 Select Allowlist (1-${allCaps.length}): `);
+            const selectedIndex = parseInt(input.trim()) - 1;
+
+            if (isNaN(selectedIndex) || selectedIndex < 0 || selectedIndex >= allCaps.length) {
+                console.error(`❌ Invalid selection. Please choose a number between 1 and ${allCaps.length}.`);
+                process.exit(1);
+            }
+
+            selectedAllowlistId = allCaps[selectedIndex].allowlist_id;
+            console.log(`\n✅ Selected: ${selectedAllowlistId}`);
+        }
+
+        // 1-3. 선택한 allowlist의 blob ID들 가져오기
+        console.log(`\n🔍 Loading blob IDs from allowlist...`);
+        const blobIds = await getBlobIdsFromAllowlist(selectedAllowlistId);
+
+        if (blobIds.length === 0) {
+            console.log(`\n⚠️  No blob IDs found in this allowlist.`);
+            console.log(`💡 You may need to upload a secret key first.`);
+            console.log(`   Run: npm run upload-secret-key`);
+            process.exit(1);
+        }
+
+        // 1-4. Blob ID 선택
+        console.log(`\n📋 Found ${blobIds.length} blob ID(s) in this allowlist:`);
+        console.log('='.repeat(50));
+        blobIds.forEach((id, index) => {
+            console.log(`${index + 1}. ${id}`);
+        });
+
+        const blobInput = await getUserInput(`\n🔢 Select Blob ID (1-${blobIds.length}): `);
+        const selectedBlobIndex = parseInt(blobInput.trim()) - 1;
+
+        if (isNaN(selectedBlobIndex) || selectedBlobIndex < 0 || selectedBlobIndex >= blobIds.length) {
+            console.error(`❌ Invalid selection. Please choose a number between 1 and ${blobIds.length}.`);
+            process.exit(1);
+        }
+
+        blobId = blobIds[selectedBlobIndex];
+        console.log(`\n✅ Selected Blob ID: ${blobId}`);
     }
 
     if (!blobId) {
